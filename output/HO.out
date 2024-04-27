@@ -1,0 +1,32 @@
+Overlap Grad Matrix:
+        0   0.3446  -0.1865        0        0  -0.3446        0        0        0        0   0.1865        0        0        0        0        0        0        0        0        0        0        0        0        0        0
+        0        0        0   0.2129        0        0        0        0        0        0        0        0        0        0        0  -0.2129        0        0        0        0        0        0        0        0        0
+        0        0        0        0   0.2129        0        0        0        0        0        0        0        0        0        0        0        0        0        0        0  -0.2129        0        0        0        0
+Gamma Grad Matrix:
+        0   5.1381  -5.1381        0
+        0        0        0        0
+        0        0        0        0
+Nuclear Repulsion Grad Matrix (V):
+   48.7521  -48.7521
+         0         0
+         0         0
+Electron Grad Matrix:
+  -45.8255   45.8255
+         0         0
+         0         0
+Total Grad Matrix:
+   2.9266  -2.9266
+        0        0
+        0        0
+Nuclear Repulsion Energy is 89.2164 eV.
+Electron Energy is -602.188 eV.
+The molecule in file ../sample_input/HO.txt has energy -512.9712342 eV.
+
+Beginning Steepest Descent with Backtracking (Armijo condition) to optimize location.
+Step = 0; E = -512.9712342; F_norm = 5.853161245
+Step = 1; E = -515.7363345; F_norm = 0.09711347559
+Step = 2; E = -515.691856; F_norm = 0.002881661002
+Converged in 3 steps. To a cluster energy of -515.691856
+----Optimized Positions----
+-0.02878023885, 0, 0
+1.858780239, 0, 0
