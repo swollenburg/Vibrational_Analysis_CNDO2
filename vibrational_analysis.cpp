@@ -27,9 +27,8 @@ struct ContractedGaussian{
 
 struct Atom{
     int element, charge, L, Z;
-    double x, y, z, ex, ey, ez, csx, csy, csz, cpx, cpy, cpz;
+    double x, y, z, ex, ey, ez, csx, csy, csz, cpx, cpy, cpz, mass;
     std::vector<std::vector<int>> orbitals; 
-    
 };
 
 struct Molecule{
@@ -104,18 +103,23 @@ Molecule readMolecule(std::string filepath) {
             if(atom.element == 1) {
                 atom.L = 0;
                 atom.Z = 1;
+                atom.mass = 1.0078;
             } else if(atom.element==6) {
                 atom.L = 1;
                 atom.Z = 4;
+                atom.mass = 12.011;
             } else if(atom.element==7) {
                 atom.L = 1;
                 atom.Z = 5;
+                atom.mass = 14.007;
             }else if(atom.element==8) {
                 atom.L = 1;
                 atom.Z = 6;
+                atom.mass = 15.999;
             } else if(atom.element==9) {
                 atom.L = 1;
                 atom.Z = 7;
+                atom.mass = 18.998;
             } else {
                 std::cout << "Atom not supported." << std::endl;
             }
@@ -1151,6 +1155,7 @@ arma::Mat<double> scfWithGradOut(std::ofstream &out, Molecule &molecule, arma::M
     double pDiff = 1;
     int count = 0;
     while(pDiff>cutoff) {
+        // std::cout << pDiff << std::endl;
         // Fock Matrices 
         arma::Mat<double> Fa(currentMatAlpha);
         arma::Mat<double> Fb(currentMatBeta);
@@ -1268,9 +1273,8 @@ arma::Mat<double> scfWithGradOut(std::ofstream &out, Molecule &molecule, arma::M
     return totalGrad;
 }
 
-
 /*
- Optimization
+ Geometric Optimization
 */
 double l2_norm(arma::Mat<double> totalGrad) {
     /*
@@ -1297,9 +1301,9 @@ double l2_norm(arma::Mat<double> totalGrad) {
 double backtrackingLineSearch(std::ofstream &out, Molecule molecule, arma::Mat<double> coreHamiltonianMat, \
                               arma::Mat<double> gammaMat, arma::Mat<double> overlapMat, \
                               arma::Mat<double> gammaMatDeriv, arma::Mat<double> overlapMatDeriv) {
-    double alpha=0.01; // max step size
-    double beta=0.5; // proportion to backtrack step
-    double gamma=0.000001; // Armijo variable for sufficient decrease
+    double alpha=0.00001; // max step size
+    double beta=0.1; // proportion to backtrack step
+    double gamma=0.0001; // Armijo variable for sufficient decrease
 
     // Calculate force grad
     arma::Mat<double> totalGrad = scfWithGradOut(out, molecule, coreHamiltonianMat, gammaMat, overlapMat, gammaMatDeriv, overlapMatDeriv, 1e-6);
@@ -1314,7 +1318,7 @@ double backtrackingLineSearch(std::ofstream &out, Molecule molecule, arma::Mat<d
     // Potential for infinite loop, possible correction
     //     -Set limit for alpha and once below, set alpha to larger than original.
     //     -Possibly use recursive calls to enlarge alpha. 
-    for(auto i=0; i<100; ++i) {
+    for(auto i=0; i<1000; ++i) {
         // Create copy of molecule to adjust
         Molecule testMolecule = molecule;
 
@@ -1350,7 +1354,7 @@ double backtrackingLineSearch(std::ofstream &out, Molecule molecule, arma::Mat<d
     return alpha;
 }
 
-void steepestDescentBacktracking(std::ofstream &out, Molecule molecule, arma::Mat<double> coreHamiltonianMat, \
+void steepestDescentBacktracking(std::ofstream &out, Molecule &molecule, arma::Mat<double> coreHamiltonianMat, \
                                  arma::Mat<double> gammaMat, arma::Mat<double> overlapMat, \
                                  arma::Mat<double> gammaMatDeriv, arma::Mat<double> overlapMatDeriv, \
                                  int maxIter=1000,  double convergLimit=0.01) {
@@ -1399,8 +1403,217 @@ void steepestDescentBacktracking(std::ofstream &out, Molecule molecule, arma::Ma
     for(auto i=0; i<molecule.atoms.size(); i++) {
         out << molecule.atoms[i].x << ", " << molecule.atoms[i].y << ", " << molecule.atoms[i].z << std::endl;
     }
+    totalGrad.print(out, "Optimized Grad");
 }
 
+/*
+ Vibrational Analysis
+*/
+void makeMassWeightedHessian(Molecule molecule, arma::Mat<double> &Hessian) {
+    int N = molecule.atoms.size();
+    int A = 3*N;
+    int x, y;
+    double massX, massY, mass;
+    for(int atomX=0; atomX<N; ++atomX) {
+        for(int dirX=0; dirX<3; ++dirX) {
+            for(int atomY=0; atomY<N; ++atomY) {
+                for(int dirY=0; dirY<3; ++dirY) {
+                    x = atomX*3 + dirX;
+                    y = atomY*3 + dirY; 
+                    massX = molecule.atoms[atomX].mass;
+                    massY = molecule.atoms[atomY].mass;
+                    mass = std::sqrt(massX*massY);
+                    Hessian(x,y) = Hessian(x,y)/mass;
+                }
+            }
+        }
+    }
+}
+
+void vibrationalAnalysis(std::ofstream &out, Molecule molecule, double h=1e-4, double cutoff=1e-6) {
+    
+    // make copy so I don't mess up original molecule object (just in case)
+    // Molecule copymol = molecule;
+    int A = molecule.atoms.size()*3;
+    arma::Mat<double> Hessian(A, A);
+    int numBasisF = numBasisFuncs(molecule);
+
+    int basisStart = 0;
+    for(int atom=0; atom<molecule.atoms.size(); ++atom) {
+        for(int xyz=0; xyz<3; ++xyz) {
+            // std::cout << "TESTxyz" << std::endl;
+            // // print statment to check for atom position. (Paste where needed.)
+            // if(xyz==0) {
+            //     std::cout << molecule.atoms[atom].x << "  ";
+            // } else if(xyz==1) {
+            //     std::cout << molecule.atoms[atom].y << "  ";
+            // } else if(xyz==2) {
+            //     std::cout << molecule.atoms[atom].z << "  ";
+            // }
+            // for(int bf=basisStart; bf<basisStart+molecule.atoms[atom].orbitals.size(); ++bf) {
+            //     std::cout << molecule.basisFunctions[bf].center[xyz] << std::endl;
+            // }
+
+            // update atom coordinate PLUS
+            if(xyz==0) {
+                molecule.atoms[atom].x += h;
+            } else if(xyz==1) {
+                molecule.atoms[atom].y += h;
+            } else if(xyz==2) {
+                molecule.atoms[atom].z += h;
+            }
+            //update basis functions coordinates for atom
+            for(int bf=basisStart; bf<basisStart+molecule.atoms[atom].orbitals.size(); ++bf) {
+                molecule.basisFunctions[bf].center[xyz] += h;
+            }
+            
+            // Overlap Matrix (create vector of vectors, feed into matrix)
+            arma::Mat<double> overlapMat(numBasisF, numBasisF);
+            overlapMat = createMatrix(createOverlapMatrix(molecule));
+
+            // Overlap Matrix Gradient
+            arma::Mat<double> overlapMatDeriv(3, numBasisF*numBasisF);
+            overlapMatDeriv = createOverlapDerivMat(molecule);
+            // overlapMatDeriv.print(out, "Overlap Grad Matrix:");
+
+            // Create gamma
+            arma::Mat<double> gammaMat = createMatrix(createGammaMatrix(molecule));
+            gammaMat *= EV_AU_CONV;
+
+            // Gamma Matrix Gradient
+            arma::Mat<double> gammaMatDeriv(3, numBasisF*numBasisF);
+            gammaMatDeriv = createGammaMatrixGrad(molecule);
+            gammaMatDeriv *= EV_AU_CONV;
+            // gammaMatDeriv.print(out, "Gamma Grad Matrix:");
+
+            // Create Core Hamiltonian Matrix
+            arma::Mat<double> coreHamiltonianMat(numBasisF, numBasisF);
+            coreHamiltonianMat = createMatrix(createCoreHamiltonianMatrix(molecule, gammaMat, overlapMat));
+
+            // calculate PLUS grad
+            arma::Mat<double> totalGrad_plus = scfWithGradOut(out, molecule, coreHamiltonianMat, gammaMat, overlapMat, gammaMatDeriv, overlapMatDeriv, cutoff);
+            // update atom coordinate to MINUS
+            if(xyz==0) {
+                molecule.atoms[atom].x -= 2*h;
+            } else if(xyz==1) {
+                molecule.atoms[atom].y -= 2*h;
+            } else if(xyz==2) {
+                molecule.atoms[atom].z -= 2*h;
+            }
+            //update basis functions coordinates for atom
+            for(int bf=basisStart; bf<basisStart+molecule.atoms[atom].orbitals.size(); ++bf) {
+                molecule.basisFunctions[bf].center[xyz] -= 2*h;
+            }
+
+            // Overlap Matrix (create vector of vectors, feed into matrix)
+            overlapMat = createMatrix(createOverlapMatrix(molecule));
+
+            // Overlap Matrix Gradient
+            overlapMatDeriv = createOverlapDerivMat(molecule);
+            // overlapMatDeriv.print(out, "Overlap Grad Matrix:");
+
+            // Create gamma
+            gammaMat = createMatrix(createGammaMatrix(molecule));
+            gammaMat *= EV_AU_CONV;
+
+            // Gamma Matrix Gradient
+            gammaMatDeriv = createGammaMatrixGrad(molecule);
+            gammaMatDeriv *= EV_AU_CONV;
+            // gammaMatDeriv.print(out, "Gamma Grad Matrix:");
+
+            // Create Core Hamiltonian Matrix
+            coreHamiltonianMat = createMatrix(createCoreHamiltonianMatrix(molecule, gammaMat, overlapMat));
+
+            // calculate PLUS grad
+            arma::Mat<double> totalGrad_minus = scfWithGradOut(out, molecule, coreHamiltonianMat, gammaMat, overlapMat, gammaMatDeriv, overlapMatDeriv, cutoff);
+            // RESET COORDS
+            // update atom coordinate to ORIGIN
+            if(xyz==0) {
+                molecule.atoms[atom].x += h;
+            } else if(xyz==1) {
+                molecule.atoms[atom].y += h;
+            } else if(xyz==2) {
+                molecule.atoms[atom].z += h;
+            }
+            //update basis functions coordinates for atom
+            for(int bf=basisStart; bf<basisStart+molecule.atoms[atom].orbitals.size(); ++bf) {
+                molecule.basisFunctions[bf].center[xyz] += h;
+            }
+
+            // FIND DIFFERENCE
+            arma::Mat<double> doublederiv = totalGrad_plus - totalGrad_minus;
+            doublederiv = doublederiv/(2*h);
+            doublederiv.reshape(A,1);
+            
+            for(int i=0; i<A; ++i) {
+                Hessian(i,atom*3+xyz) = doublederiv(i,0);
+            }
+        }
+        basisStart += molecule.atoms[atom].orbitals.size();
+    }
+    // average error ***
+    for(int i=0; i<A; ++i) {
+        for(int j=0; j<i; ++j) {
+            double avg = (Hessian(i,j) + Hessian(j,i)) / 2;
+            Hessian(i,j) = avg;
+            Hessian(j,i) = avg;
+        }
+    }
+
+    /*
+        CONVERT UNITS
+    */
+    // Hessian = Hessian/EV_AU_CONV; // Conversion from EV to AU
+    // Hessian = Hessian*627.5; // Conversion to kcal/mol/au^2
+    Hessian = Hessian*23.06035; // conversion from eV to kcal/mol
+    Hessian = Hessian/(0.529177249*0.529177249); // Conversion to kcal/mol/A^2; 1 a.u. = 0.529177249 Angstrom; kcal/mol/A^2
+    Hessian = ((1e8 * 4184)/(1e-10 * 6.022e23)) * Hessian; // (J/m to millidynes)(Kcal to J)/(Ang to m)(Mol to molecule) = millidynes/A
+
+    // Hessian = Hessian*1.602176e-19; // (from eV to J)
+    // Hessian = Hessian/(0.529177e-10*0.529177e-10); // (/au^2 to /m^2)
+    // Hessian = Hessian/1.66054e-27; // (/amu to /kg)
+
+    // Mass weighted Hessian
+    Hessian.print(out, "Hessian");
+    makeMassWeightedHessian(molecule, Hessian); // millidynes/A/amu
+    Hessian.print(out, "Mass Weighted");
+
+    
+
+    // // Diagnolize(molecule, Hessian)
+    // arma::Mat<double> diagMat = arma::diagmat(Hessian);
+    // diagMat.print("Diagonalized Hessian");  
+
+    arma::vec E;
+    arma::Mat<double> V;
+    arma::eig_sym(E, V, Hessian);
+    E.print(out, "Force constants");
+    V.print(out, "Modes");
+    // arma::eig_sym(E, V, Hessian);
+    // E.print("H - Frequencies");
+    // V.print("H - Modes");
+
+
+    // Calculate frequency
+    for(auto i=0; i<A; ++i) {
+        
+        if(E(i) > 1e-10) {
+            // E(i) = 4.13567e16/2.9979e10 * std::sqrt(E(i)); 
+            E(i) = 1/(2*M_PI*2.9979e10) * std::sqrt(1e5*6.022e23*E(i)); // (1e2)*(1e3)*(6.022e23); from millidynes/A (1 mDy/A = 1e2 J/m^2; 1 amu = 1e-3 / 6.022e23 kg) = N/m/kg
+            // E(i) = 1302.79 * std::sqrt(E(i)); //
+        } else {
+            E(i) = 0;
+        }
+        
+         
+    }
+
+    E.print(out, "Frequencies (cm^-1)");
+
+
+
+
+}
 /*
  Solving
 */
@@ -1499,7 +1712,13 @@ int main(int argc, char** argv) {
 
     // Optimization with Steepest Descent with Backtracking
     out << "Beginning Steepest Descent with Backtracking (Armijo condition) to optimize location." << std::endl;
-    steepestDescentBacktracking(out, molecule, coreHamiltonianMat, gammaMat, overlapMat, gammaMatDeriv, overlapMatDeriv, 1000, 0.01);
+    steepestDescentBacktracking(out, molecule, coreHamiltonianMat, gammaMat, overlapMat, gammaMatDeriv, overlapMatDeriv, 1000, 0.001);
+    out << std::endl;
+
+    // Begin vibrational analysis
+    out << "Beginning Vibrational Analysis." << std::endl;
+    vibrationalAnalysis(out, molecule, 1e-5, 1e-6);
+    out << std::endl;
 
     return 0;
 }
